@@ -16,6 +16,7 @@ exports.handler = async (event) => {
         const command = new PutObjectCommand({
           Bucket: bucketName,
           Key: `uploads/${file.name}.jpg`,
+          // size: file.size,
         });
 
         const url = await getSignedUrl(s3, command, { expiresIn: 3600 }); // URL expires in 1 hour

@@ -45,7 +45,7 @@ export class ImgAwsStack extends cdk.Stack {
 
     const imageTooLargeTopic = new sns.Topic(this, "image-too-large-topic");
 
-    new sns.Subscription(this, "EmailSubscription", {
+    new sns.Subscription(this, "image-too-large-email-subscription", {
       topic: imageTooLargeTopic,
       protocol: sns.SubscriptionProtocol.EMAIL,
       endpoint: "quang.pham@codeleap.de",
@@ -56,7 +56,7 @@ export class ImgAwsStack extends cdk.Stack {
         namespace: imageTooLargeMetricFilter.metric().namespace,
         metricName: imageTooLargeMetricFilter.metric().metricName,
         statistic: "Sum",
-        period: cdk.Duration.minutes(1),
+        period: cdk.Duration.seconds(GENERATE_THUMBNAIL_LAMBDA_FUNCTION_TIME),
       }),
       threshold: 1,
       evaluationPeriods: 1,
@@ -105,9 +105,9 @@ export class ImgAwsStack extends cdk.Stack {
 
     const imgResource = api.root.addResource("img");
 
-    const imageModel = api.addModel("ImageModel", {
+    const imageModel = api.addModel("image-model", {
       contentType: "application/json",
-      modelName: "ImageModel",
+      modelName: "image-model",
       schema: {
         schema: apigateway.JsonSchemaVersion.DRAFT4,
         title: "image",
