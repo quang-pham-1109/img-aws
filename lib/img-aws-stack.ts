@@ -1,13 +1,22 @@
 import * as path from "node:path";
 
 import * as cdk from "aws-cdk-lib";
-import { aws_s3 as s3, aws_lambda as lambda } from "aws-cdk-lib";
-import { Architecture, Runtime } from "aws-cdk-lib/aws-lambda";
+import { Runtime } from "aws-cdk-lib/aws-lambda";
 
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as logs from "aws-cdk-lib/aws-logs";
+import * as sns from "aws-cdk-lib/aws-sns";
 import { LambdaIntegration } from "aws-cdk-lib/aws-apigateway";
 import * as eventsources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as cw_actions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as s3n from "aws-cdk-lib/aws-s3-notifications";
+
+// import * as s3 from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
+import { GENERATE_THUMBNAIL_LAMBDA_FUNCTION_TIME } from "./constants";
 
 export class ImgAwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -16,6 +25,44 @@ export class ImgAwsStack extends cdk.Stack {
     const imageBucket = new s3.Bucket(this, "image-bucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+
+    const generateThumbnailLogGroup = new logs.LogGroup(
+      this,
+      "generate-thumbnail-log-group"
+    );
+
+    const imageTooLargeMetricFilter = new logs.MetricFilter(
+      this,
+      "image-too-large-metric-filter",
+      {
+        logGroup: generateThumbnailLogGroup,
+        filterPattern: logs.FilterPattern.literal("Image is too large"),
+        metricNamespace: "image-thumbnail-metrics",
+        metricName: "ImageTooLarge",
+        metricValue: "1",
+      }
+    );
+
+    const imageTooLargeTopic = new sns.Topic(this, "image-too-large-topic");
+
+    new sns.Subscription(this, "EmailSubscription", {
+      topic: imageTooLargeTopic,
+      protocol: sns.SubscriptionProtocol.EMAIL,
+      endpoint: "quang.pham@codeleap.de",
+    });
+
+    const alarm = new cloudwatch.Alarm(this, "image-too-large-alarm", {
+      metric: new cloudwatch.Metric({
+        namespace: imageTooLargeMetricFilter.metric().namespace,
+        metricName: imageTooLargeMetricFilter.metric().metricName,
+        statistic: "Sum",
+        period: cdk.Duration.minutes(1),
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+
+    alarm.addAlarmAction(new cw_actions.SnsAction(imageTooLargeTopic));
 
     const imageGetSignedUrlS3 = new NodejsFunction(
       this,
@@ -40,24 +87,17 @@ export class ImgAwsStack extends cdk.Stack {
         "../src/handlers/generate-thumbnail/index.js"
       ),
       handler: "handler",
-      timeout: cdk.Duration.seconds(40),
+      timeout: cdk.Duration.seconds(GENERATE_THUMBNAIL_LAMBDA_FUNCTION_TIME),
       environment: {
         BUCKET_NAME: imageBucket.bucketName,
       },
       bundling: {
         nodeModules: ["jimp"],
       },
+      logGroup: generateThumbnailLogGroup,
     });
 
-    generateThumbnail.addEventSource(
-      new eventsources.S3EventSource(imageBucket, {
-        events: [s3.EventType.OBJECT_CREATED],
-        filters: [{ prefix: "uploads/" }], // triggered only for files in the uploads/ directory
-      })
-    );
-
     imageBucket.grantPut(imageGetSignedUrlS3);
-
     imageBucket.grantRead(generateThumbnail);
     imageBucket.grantPut(generateThumbnail);
 
@@ -97,14 +137,28 @@ export class ImgAwsStack extends cdk.Stack {
       },
     });
 
-    // const requestValidator = new apigateway.RequestValidator(
-    //   this,
-    //   "RequestValidator",
-    //   {
-    //     restApi: api,
-    //     validateRequestBody: true,
-    //     validateRequestParameters: false,
-    //   }
-    // );
+    const generateThumbnailQueue = new sqs.Queue(
+      this,
+      "generate-thumbnail-queue",
+      {
+        visibilityTimeout: cdk.Duration.seconds(
+          GENERATE_THUMBNAIL_LAMBDA_FUNCTION_TIME
+        ),
+      }
+    );
+
+    imageBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.SqsDestination(generateThumbnailQueue),
+      { prefix: "uploads/" }
+    );
+
+    generateThumbnail.addEventSource(
+      new eventsources.SqsEventSource(generateThumbnailQueue, {
+        maxBatchingWindow: cdk.Duration.seconds(5),
+        batchSize: 1000,
+        maxConcurrency: 20,
+      })
+    );
   }
 }
