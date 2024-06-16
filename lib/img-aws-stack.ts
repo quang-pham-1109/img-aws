@@ -16,7 +16,10 @@ import * as s3n from "aws-cdk-lib/aws-s3-notifications";
 
 // import * as s3 from "aws-cdk-lib/aws-s3";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
-import { GENERATE_THUMBNAIL_LAMBDA_FUNCTION_TIME } from "./constants";
+import {
+  GENERATE_THUMBNAIL_LAMBDA_FUNCTION_TIME,
+  TEST_SUBSCRIBER_EMAIL,
+} from "./constants";
 
 export class ImgAwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -38,7 +41,7 @@ export class ImgAwsStack extends cdk.Stack {
         logGroup: generateThumbnailLogGroup,
         filterPattern: logs.FilterPattern.literal("Image is too large"),
         metricNamespace: "image-thumbnail-metrics",
-        metricName: "ImageTooLarge",
+        metricName: "image-too-large",
         metricValue: "1",
       }
     );
@@ -48,7 +51,7 @@ export class ImgAwsStack extends cdk.Stack {
     new sns.Subscription(this, "image-too-large-email-subscription", {
       topic: imageTooLargeTopic,
       protocol: sns.SubscriptionProtocol.EMAIL,
-      endpoint: "quang.pham@codeleap.de",
+      endpoint: TEST_SUBSCRIBER_EMAIL,
     });
 
     const alarm = new cloudwatch.Alarm(this, "image-too-large-alarm", {
@@ -107,7 +110,7 @@ export class ImgAwsStack extends cdk.Stack {
 
     const imageModel = api.addModel("image-model", {
       contentType: "application/json",
-      modelName: "image-model",
+      modelName: "imageModel",
       schema: {
         schema: apigateway.JsonSchemaVersion.DRAFT4,
         title: "image",
@@ -132,7 +135,7 @@ export class ImgAwsStack extends cdk.Stack {
     imgResource.addMethod("POST", new LambdaIntegration(imageGetSignedUrlS3), {
       requestModels: { "application/json": imageModel },
       requestValidatorOptions: {
-        requestValidatorName: "ImageGetSignedUrlS3Validator",
+        requestValidatorName: "image-get-signed-url-s3-validator",
         validateRequestBody: true,
       },
     });
